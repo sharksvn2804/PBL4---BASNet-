@@ -1,1 +1,1 @@
-Link chứa model: https://drive.google.com/drive/folders/1GUwM_kiD-_hnF_ScKXYqHEJOeMq8Zzps?usp=drive_link
+Link chứa model: https://drive.google.com/drive/folders/1fxyhRmLCfPovoN-WosHzqXmPUYlw66bS?usp=drive_link
