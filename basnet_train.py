@@ -61,7 +61,7 @@ if torch.cuda.is_available():
 accumulation_steps   = 8       # RTX 3050: effective batch = 8, update nhiều hơn accum=32
 batch_size_train     = 1      # RTX 3050 4GB → bắt buộc bs=1
 batch_size_val       = 1      # RTX 3050 4GB → bắt buộc bs=1
-epoch_num            = 60      # SOD nên train lâu hơn một chút, LR cosine sẽ tự giảm
+epoch_num            = 20      # SOD nên train lâu hơn một chút, LR cosine sẽ tự giảm
 train_num            = None    # None = dùng toàn bộ ảnh còn lại sau val split
 val_num              = None    # None = lấy VAL_RATIO từ toàn bộ dataset
 SIZE_TRAIN           = 224     # nếu OOM thì hạ xuống 192
