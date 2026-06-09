@@ -1,5 +1,3 @@
-Link chứa model (sau fine tune): https://drive.google.com/drive/folders/1fxyhRmLCfPovoN-WosHzqXmPUYlw66bS?usp=drive_link
-
 # BASNet - Salient Object Detection
 
 Repository này dùng để huấn luyện, fine-tune, đánh giá và chạy dự đoán với mô hình **BASNet** cho bài toán phát hiện/phân đoạn vật thể nổi bật (*Salient Object Detection*).
@@ -178,23 +176,18 @@ mkdir test_data\test_results
 
 ## 5. Cài đặt môi trường
 
-Khuyến nghị dùng Python 3.8 trở lên. Tạo môi trường ảo:
+Project này có thể được chạy bằng môi trường Python riêng để tránh lỗi xung đột thư viện. Trong quá trình thực hiện, nhóm sử dụng môi trường tên **`basnet_gpu`**. Người dùng có thể tạo môi trường cùng tên hoặc môi trường tương đương.
+
+### 5.1. Môi trường khuyến nghị
+
+Nếu dùng **Conda**, tạo môi trường như sau:
 
 ```bash
-python -m venv venv
+conda create -n basnet_gpu python=3.8 -y
+conda activate basnet_gpu
 ```
 
-Kích hoạt môi trường ảo:
-
-```bash
-# Windows
-venv\Scripts\activate
-
-# Linux/MacOS
-source venv/bin/activate
-```
-
-Cài đặt thư viện cần thiết:
+Sau đó cài các thư viện cần thiết:
 
 ```bash
 pip install torch torchvision numpy pillow opencv-python scikit-image scipy matplotlib tqdm
@@ -204,9 +197,79 @@ Nếu chạy bằng notebook, cài thêm:
 
 ```bash
 pip install notebook ipykernel
+python -m ipykernel install --user --name basnet_gpu --display-name "Python (basnet_gpu)"
+```
+
+Khi mở notebook, chọn kernel:
+
+```text
+Python (basnet_gpu)
+```
+
+Nếu không dùng Conda, có thể dùng `venv`:
+
+```bash
+python -m venv basnet_gpu
+```
+
+Kích hoạt môi trường:
+
+```bash
+# Windows
+basnet_gpu\Scripts\activate
+
+# Linux/MacOS
+source basnet_gpu/bin/activate
+```
+
+Sau đó cài thư viện tương tự:
+
+```bash
+pip install torch torchvision numpy pillow opencv-python scikit-image scipy matplotlib tqdm
 ```
 
 ---
+
+### 5.2. Ghi chú về requirements gốc của BASNet
+
+Một số tài liệu/source code BASNet gốc sử dụng môi trường khá cũ:
+
+```text
+Python 3.6
+numpy 1.15.2
+scikit-image 0.14.0
+Pillow 5.2.0
+PyTorch 0.4.0
+torchvision 0.2.1
+glob
+```
+
+Trong đó, `glob` là thư viện có sẵn của Python nên không cần cài bằng `pip`.
+
+Các phiên bản trên chỉ nên xem là **requirements tham khảo của mã nguồn gốc**. Với project này, nên ưu tiên dùng môi trường đã kiểm thử là **`basnet_gpu`** hoặc môi trường có các thư viện tương đương. Không nên bắt buộc người dùng cài đúng PyTorch `0.4.0` nếu code hiện tại đã được chỉnh sửa và chạy ổn trên môi trường mới hơn.
+
+---
+
+### 5.3. Kiểm tra phiên bản thư viện trong môi trường đang dùng
+
+Sau khi kích hoạt môi trường `basnet_gpu`, có thể kiểm tra nhanh bằng:
+
+```bash
+python --version
+python -c "import torch, torchvision, numpy, PIL, skimage; print('torch:', torch.__version__); print('torchvision:', torchvision.__version__); print('numpy:', numpy.__version__); print('Pillow:', PIL.__version__); print('skimage:', skimage.__version__)"
+```
+
+Nếu muốn lưu lại chính xác môi trường đang dùng, có thể xuất file requirements:
+
+```bash
+pip freeze > requirements.txt
+```
+
+Sau đó người khác có thể cài lại bằng:
+
+```bash
+pip install -r requirements.txt
+```
 
 ## 6. Hướng dẫn chạy code
 
