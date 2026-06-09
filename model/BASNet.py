@@ -1,31 +1,14 @@
-"""
-BASNet_3050_lite.py
-Light BASNet-style model for Salient Object Detection on RTX 3050 / 4GB VRAM.
-
-How to use:
-  Option 1: copy this file into your model/ folder and import:
-      from model.BASNet_3050_lite import BASNet
-  Option 2: rename it to BASNet.py to replace your current heavy model.
-
-Main changes compared with the uploaded model:
-  - Keep ResNet34 encoder, but use a much lighter BASNet decoder.
-  - Remove the very heavy RefUnet with ASPP + AttentionGate at full resolution.
-  - Use a small residual refine head for cleaner boundaries.
-  - Use GroupNorm for small batch training.
-  - Return 8 sigmoid outputs to remain compatible with your current training loop.
-"""
-
+# Import libraries
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
 
-
 # ------------------------------------------------------------
 # Utility layers
 # ------------------------------------------------------------
 def _make_gn(channels: int, max_groups: int = 8) -> nn.GroupNorm:
-    """Choose a safe GroupNorm group count for any channel number."""
+    # Choose a safe GroupNorm group count for any channel number.
     groups = min(max_groups, channels)
     while channels % groups != 0:
         groups -= 1
@@ -33,7 +16,7 @@ def _make_gn(channels: int, max_groups: int = 8) -> nn.GroupNorm:
 
 
 def replace_bn_with_gn(module: nn.Module, max_groups: int = 8) -> nn.Module:
-    """Replace BatchNorm2d with GroupNorm while preserving BN affine weights."""
+    # Replace BatchNorm2d with GroupNorm while preserving BN affine weights
     for name, child in module.named_children():
         if isinstance(child, nn.BatchNorm2d):
             gn = _make_gn(child.num_features, max_groups=max_groups)
@@ -78,7 +61,7 @@ class ResidualBlockGN(nn.Module):
         return self.relu(self.conv2(self.conv1(x)) + self.shortcut(x))
 
 class LiteRefineHead(nn.Module):
-    """Small residual refinement head. Much cheaper than full RefUnet."""
+    # Small residual refinement head. Much cheaper than full RefUnet.
     def __init__(self, channels: int = 32):
         super().__init__()
         self.refine = nn.Sequential(
@@ -91,7 +74,7 @@ class LiteRefineHead(nn.Module):
         return logits + self.refine(logits)
 
 def _resnet34_encoder(pretrained: bool = True) -> nn.Module:
-    """Load ResNet34 with a safe fallback for different torchvision versions."""
+    # Load ResNet34 with a safe fallback for different torchvision versions
     if pretrained:
         try:
             weights = models.ResNet34_Weights.DEFAULT
