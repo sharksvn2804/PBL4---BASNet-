@@ -31,9 +31,6 @@ Sau khi clone project về máy, cấu trúc thư mục nên được giữ như
 │   └── test_images/              # Ảnh cần chạy dự đoán bằng basnet_test.py
 ├── train_data/                   # Dữ liệu huấn luyện
 ├── validation_data/              # Dữ liệu validation/evaluation
-├── BASNet_training.ipynb
-├── basnet_bce_only.ipynb
-├── basnet_ssim_only.ipynb
 ├── basnet_train.py               # Script train/fine-tune
 ├── basnet_evaluate.py            # Script đánh giá model
 ├── basnet_test.py                # Script dự đoán ảnh test
@@ -359,23 +356,6 @@ Nếu chưa có checkpoint, tải checkpoint từ Google Drive ở phần 2 và 
 
 ```text
 saved_models/basnet_bsi/
-```
-
----
-
-### 6.4. Chạy bằng Jupyter Notebook
-
-Có thể mở notebook bằng lệnh:
-
-```bash
-jupyter notebook BASNet_training.ipynb
-```
-
-Một số notebook khác trong project:
-
-```text
-basnet_bce_only.ipynb      # Thử nghiệm BCE loss
-basnet_ssim_only.ipynb     # Thử nghiệm SSIM loss
 ```
 
 ---
