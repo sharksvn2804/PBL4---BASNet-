@@ -32,18 +32,15 @@ from model import BASNet
 # ============================================================
 #  CONFIG
 # ============================================================
-
-# ── Số ảnh muốn evaluate (đặt None để dùng toàn bộ tập) ──
-NUM_SAMPLES = 1000
-RANDOM_SEED = 42          # seed để tái lặp kết quả
+NUM_SAMPLES = 1000        # number of samples for evaluation
+RANDOM_SEED = 42          # seed
 
 FIGURES_DIR = "./figures"
 os.makedirs(FIGURES_DIR, exist_ok=True)
 
 # ============================================================
-#  EVALUATION METRICS (same as basnet_train.py - DO NOT CHANGE)
+#  EVALUATION METRICS (same as basnet_train.py)
 # ============================================================
-
 def compute_mae(pred, gt):
     pred_np = pred.squeeze().cpu().float().numpy().astype(np.float64)
     gt_np   = gt.squeeze().cpu().float().numpy().astype(np.float64)
@@ -172,9 +169,8 @@ def compute_boundary_fmeasure(pred, gt, threshold=0.5, beta_sq=0.3, tolerance=3)
 # ============================================================
 #  PLOTTING HELPERS
 # ============================================================
-
 def _style_ax(ax, title, ylabel, color):
-    """Áp dụng style chung cho một subplot."""
+    # Common style:
     ax.set_title(title, fontsize=13, fontweight='bold', pad=8)
     ax.set_xlabel("Sample index", fontsize=10)
     ax.set_ylabel(ylabel, fontsize=10)
@@ -185,10 +181,7 @@ def _style_ax(ax, title, ylabel, color):
 
 
 def plot_four_metrics(wfm_list, bfm_list, sm_list, em_list, save_path):
-    """
-    Vẽ 4 metrics (wFm, bFm, Sm, Em) trên 1 figure (2×2 grid).
-    Mỗi panel có: scatter per-sample + running-average line + final-avg hline.
-    """
+    # 4 metrics:
     metrics = [
         (wfm_list, "Weighted F-measure  (F^w)", "F^w",  "#4C72B0"),
         (bfm_list, "Boundary F-measure  (F^b)", "F^b",  "#DD8452"),
@@ -226,9 +219,7 @@ def plot_four_metrics(wfm_list, bfm_list, sm_list, em_list, save_path):
 
 
 def plot_mae(mae_list, save_path):
-    """
-    Vẽ riêng biểu đồ MAE: scatter + running-average line + final-avg hline.
-    """
+    # Plot MAE:
     arr = np.array(mae_list)
     xs  = np.arange(1, len(arr) + 1)
     running_avg = np.cumsum(arr) / xs
@@ -289,11 +280,11 @@ if __name__ == '__main__':
         glob.glob(test_data_dir + test_image_dir + '*' + image_ext)
     )
 
-    # ── Lấy subset ngẫu nhiên (có seed để tái lặp) ──────────────
+    # Random samples
     if NUM_SAMPLES is not None and NUM_SAMPLES < len(all_img_paths):
         random.seed(RANDOM_SEED)
         test_img_name_list = random.sample(all_img_paths, NUM_SAMPLES)
-        test_img_name_list.sort()          # sắp lại để dễ debug
+        test_img_name_list.sort()          # Sort for debugging
         print(f"[DATA] Subset: {NUM_SAMPLES}/{len(all_img_paths)} images "
               f"(seed={RANDOM_SEED})")
     else:
@@ -329,7 +320,7 @@ if __name__ == '__main__':
     # ------- Evaluation --------
     print("\n[EVAL] Evaluating on DUTS-TE subset...")
 
-    # Per-sample lists (dùng để vẽ đồ thị)
+    # Per-sample lists
     mae_list = []
     sm_list  = []
     em_list  = []
