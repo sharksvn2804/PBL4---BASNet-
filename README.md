@@ -1,92 +1,189 @@
-# BASNet - Salient Object Detection
+# PBL4 - Fine-tuning BASNet cho phân đoạn đối tượng nổi bật
 
-Repository này dùng để huấn luyện, fine-tune, đánh giá và chạy dự đoán với mô hình **BASNet** cho bài toán phát hiện/phân đoạn vật thể nổi bật (*Salient Object Detection*).
+## 1. Tóm tắt
 
-Do dữ liệu và checkpoint mô hình có dung lượng lớn, GitHub chỉ lưu **mã nguồn chính**. Người dùng cần tải thêm **dataset** và **model `.pth`** rồi đặt đúng thư mục như hướng dẫn bên dưới.
+Repository này dùng để huấn luyện, fine-tune, đánh giá và chạy dự đoán với mô hình **BASNet** cho bài toán phát hiện/phân đoạn đối tượng nổi bật (*Salient Object Detection*). Dự án kế thừa ý tưởng từ BASNet của Qin và cộng sự, sau đó điều chỉnh pipeline thực nghiệm để phù hợp với bài PBL4 và điều kiện GPU hạn chế.
 
----
+Các đóng góp chính của phiên bản PBL4:
 
-## 1. Cấu trúc thư mục cần có
+- Tinh chỉnh kiến trúc BASNet theo hướng nhẹ hơn.
+- Bổ sung train/validation split, checkpoint resume và lưu model tốt nhất theo nhiều metric.
+- Dùng mixed precision, gradient accumulation, AdamW, warmup + cosine scheduler.
+- Bổ sung các metric đánh giá: `MAE`, `S-measure`, `E-measure`, `wFm`, `bFm`.
+- Xuất biểu đồ loss, learning rate, metric và hình so sánh định tính.
 
-Sau khi clone project về máy, cấu trúc thư mục nên được giữ như sau:
+Model sau fine-tune được lưu tại:
+
+[Google Drive - BASNet fine-tuned models](https://drive.google.com/drive/folders/1fxyhRmLCfPovoN-WosHzqXmPUYlw66bS?usp=drive_link)
+
+Do dữ liệu và checkpoint `.pth` có dung lượng lớn, GitHub chỉ lưu mã nguồn, hình kết quả và ảnh demo nhỏ. Người dùng cần tải thêm dataset/checkpoint rồi đặt đúng thư mục như hướng dẫn bên dưới.
+
+## 2. Cơ sở lý thuyết
+
+BASNet trong bài báo **Boundary-Aware Segmentation Network for Mobile and Web Applications** giải quyết bài toán phân đoạn nhị phân bằng kiến trúc **predict-refine**:
+
+- **Prediction module**: encoder-decoder kiểu U-Net, có deep supervision ở nhiều tầng để sinh các side outputs.
+- **Refinement module**: học phần dư giữa mask dự đoán thô và ground truth để tinh chỉnh kết quả cuối.
+- **Hybrid loss**: kết hợp BCE, SSIM và IoU để học đồng thời ở mức pixel, patch và toàn ảnh.
+
+Hàm loss tổng quát của BASNet:
+
+```text
+L = sum_k alpha_k * l_k
+l_k = L_BCE + L_SSIM + L_IOU
+```
+
+Trong dự án PBL4, loss được điều chỉnh thêm thành:
+
+```text
+L_PBL4 = w_bce * L_BCE + w_ssim * L_SSIM + w_iou * L_IOU + w_edge * L_edge
+```
+
+`L_edge` được áp dụng nhẹ ở output cuối để tăng nhạy cảm với vùng biên. Các side outputs sâu vẫn được giám sát nhưng giảm trọng số để tránh over-supervision.
+
+## 3. Kiến trúc và hình tham chiếu BASNet
+
+Các hình dưới đây nằm trong thư mục `figures/`. Nhóm hình này dùng để trình bày nền tảng BASNet gốc và các kết quả tham chiếu trong tài liệu BASNet.
+
+### 3.1. Kiến trúc BASNet
+
+![BASNet architecture](figures/architecture.png)
+
+### 3.2. So sánh định lượng trong tài liệu BASNet
+
+![Quantitative comparison](figures/quan.png)
+
+### 3.3. So sánh định tính trong tài liệu BASNet
+
+![Qualitative comparison](figures/qual.png)
+
+### 3.4. Salient Object Detection
+
+![SOD qualitative comparison](figures/sod_qual_comp.PNG)
+
+### 3.5. Salient Objects in Clutter
+
+![SOC qualitative comparison](figures/soc_qual_comp.PNG)
+
+### 3.6. Camouflaged Object Detection
+
+![COD qualitative comparison](figures/cod_qual_comp.PNG)
+
+## 4. Thay đổi của dự án PBL4 so với BASNet gốc
+
+### 4.1. Mô hình
+
+- Dùng ResNet34 pretrained làm encoder.
+- Thay BatchNorm bằng GroupNorm để ổn định khi batch size nhỏ.
+- Giữ stem kiểu BASNet: convolution `3x3`, stride 1, không dùng `7x7 stride-2` và không max-pool ngay đầu mạng.
+- Giảm độ nặng của context/decoder blocks so với BASNet gốc.
+- Dùng `LiteRefineHead` để tinh chỉnh output cuối với chi phí thấp.
+- Vẫn giữ 8 outputs để tương thích deep supervision.
+
+### 4.2. Huấn luyện
+
+- Bổ sung train/validation split tự động.
+- Hỗ trợ resume bằng checkpoint.
+- Lưu checkpoint tốt nhất theo `val loss`, `MAE`, `S-measure`, `wFm`.
+- Dùng AdamW thay Adam gốc.
+- Dùng warmup + cosine learning rate scheduler.
+- Dùng mixed precision và gradient accumulation để phù hợp GPU ít VRAM.
+- Clip gradient để tăng ổn định.
+
+### 4.3. Dữ liệu và augmentation
+
+Các biến đổi dữ liệu trong quá trình train:
+
+- Resize về `SIZE_TRAIN = 224`.
+- Random crop `CROP_SIZE = 192`.
+- Random horizontal flip.
+- Random vertical flip với xác suất thấp.
+- Random rotation góc nhỏ.
+- Color jitter.
+- Gaussian blur nhẹ.
+- Gaussian noise nhẹ.
+
+## 5. Cấu trúc thư mục
+
+Sau khi clone project, cấu trúc thư mục nên có dạng:
 
 ```text
 .
-├── demo/                         # Ảnh/kết quả minh họa
-├── figures/                      # Hình ảnh, biểu đồ dùng trong báo cáo
-├── model/                        # Code kiến trúc BASNet, không đặt checkpoint .pth ở đây
-├── pytorch_iou/                  # Module IoU loss/metric
-├── pytorch_ssim/                 # Module SSIM loss/metric
+├── demo/
+├── figures/
+├── model/
+│   ├── BASNet.py
+│   ├── resnet_model.py
+│   └── __init__.py
+├── pytorch_iou/
+├── pytorch_ssim/
 ├── saved_models/
-│   └── basnet_bsi/               # Đặt các file checkpoint .pth tại đây
+│   └── basnet_bsi/
 │       ├── basnet_best_mae.pth
 │       ├── basnet_best_sm.pth
 │       ├── basnet_best_valloss.pth
 │       ├── basnet_best_wfm.pth
-│       ├── basnet_epoch_best.pth
-│       ├── checkpoint_finetune_lite.pth
-│       ├── checkpoint_finetune.pth
 │       └── checkpoint_resume.pth
 ├── test_data/
-│   └── test_images/              # Ảnh cần chạy dự đoán bằng basnet_test.py
-├── train_data/                   # Dữ liệu huấn luyện
-├── validation_data/              # Dữ liệu validation/evaluation
-├── basnet_train.py               # Script train/fine-tune
-├── basnet_evaluate.py            # Script đánh giá model
-├── basnet_test.py                # Script dự đoán ảnh test
-├── data_loader.py                # Đọc dữ liệu, tiền xử lý ảnh/mask
+│   └── test_images/
+├── train_data/
+│   └── DUTS/
+│       └── DUTS-TR/
+│           ├── DUTS-TR-Image/
+│           └── DUTS-TR-Mask/
+├── validation_data/
+│   └── DUTS-TE/
+│       ├── DUTS-TE-Image/
+│       └── DUTS-TE-Mask/
+├── basnet_train.py
+├── basnet_evaluate.py
+├── basnet_test.py
+├── data_loader.py
 └── README.md
 ```
 
-Nếu sau khi clone repository mà thiếu các thư mục `saved_models/`, `train_data/`, `validation_data/` hoặc `test_data/`, hãy tạo thủ công:
+Ý nghĩa các file chính:
+
+| File | Vai trò |
+| --- | --- |
+| `basnet_train.py` | Huấn luyện, validation, lưu checkpoint và xuất biểu đồ |
+| `basnet_evaluate.py` | Đánh giá checkpoint trên DUTS-TE |
+| `basnet_test.py` | Sinh hình so sánh định tính giữa các checkpoint tốt nhất |
+| `data_loader.py` | Dataset loader và các phép augmentation |
+| `model/BASNet.py` | BASNet phiên bản đã điều chỉnh cho dự án |
+| `figures/` | Chứa hình kiến trúc, biểu đồ và kết quả thực nghiệm |
+
+Nếu thiếu các thư mục dữ liệu/model, có thể tạo thủ công:
 
 ```bash
 mkdir -p saved_models/basnet_bsi
-mkdir -p train_data
-mkdir -p validation_data
+mkdir -p train_data/DUTS/DUTS-TR
+mkdir -p validation_data/DUTS-TE
 mkdir -p test_data/test_images
 ```
 
-Trên Windows PowerShell có thể tạo bằng:
+Trên Windows PowerShell:
 
 ```powershell
 mkdir saved_models\basnet_bsi
-mkdir train_data
-mkdir validation_data
+mkdir train_data\DUTS\DUTS-TR
+mkdir validation_data\DUTS-TE
 mkdir test_data\test_images
 ```
 
----
+## 6. Chuẩn bị model/checkpoint
 
-## 2. Tải và lưu model/checkpoint
+Tải model fine-tuned từ Google Drive:
 
-Checkpoint sau fine-tune được lưu tại Google Drive:
+[Google Drive - BASNet fine-tuned models](https://drive.google.com/drive/folders/1fxyhRmLCfPovoN-WosHzqXmPUYlw66bS?usp=drive_link)
 
-[Link chứa model sau fine-tune](https://drive.google.com/drive/folders/1fxyhRmLCfPovoN-WosHzqXmPUYIw66bS?usp=drive_link)
-
-Trong Google Drive có thể thấy các file/folder như:
+Đặt các file `.pth` vào:
 
 ```text
-code fine tune/
-Kết quả fine tune/
-model trước fine tune/
-basnet_best_mae.pth
-basnet_best_sm.pth
-basnet_best_valloss.pth
-basnet_best_wfm.pth
-basnet_epoch_best.pth
+saved_models/basnet_bsi/
 ```
 
-Cách lưu đúng:
-
-```text
-Các file .pth sau fine-tune     -> saved_models/basnet_bsi/
-Folder model trước fine tune    -> dùng khi muốn chạy lại từ checkpoint cũ hoặc pretrain
-Folder Kết quả fine tune        -> chỉ dùng để tham khảo kết quả, không bắt buộc đưa vào project
-Folder code fine tune           -> chỉ dùng nếu muốn đối chiếu hoặc thay thế code fine-tune
-```
-
-Ví dụ sau khi tải model, thư mục local cần có dạng:
+Ví dụ:
 
 ```text
 saved_models/
@@ -95,59 +192,45 @@ saved_models/
     ├── basnet_best_sm.pth
     ├── basnet_best_valloss.pth
     ├── basnet_best_wfm.pth
-    └── basnet_epoch_best.pth
+    └── checkpoint_resume.pth
 ```
 
-Lưu ý quan trọng:
+Lưu ý:
 
-- Không đặt file `.pth` vào thư mục `model/` vì `model/` chỉ chứa code kiến trúc mạng.
-- Nếu chỉ muốn chạy dự đoán hoặc đánh giá, nên dùng `basnet_best_mae.pth` hoặc `basnet_best_wfm.pth`.
-- Nếu chạy code báo lỗi không tìm thấy checkpoint, kiểm tra lại đường dẫn trong `basnet_evaluate.py` hoặc `basnet_test.py` có trỏ đến `saved_models/basnet_bsi/*.pth` chưa.
+- Không đặt checkpoint `.pth` vào thư mục `model/`, vì `model/` chỉ chứa code kiến trúc mạng.
+- Nếu chỉ muốn đánh giá hoặc dự đoán, nên dùng `basnet_best_mae.pth` hoặc `basnet_best_wfm.pth`.
+- Nếu script báo không tìm thấy checkpoint, kiểm tra đường dẫn trong `basnet_evaluate.py` hoặc `basnet_test.py`.
 
----
+## 7. Chuẩn bị dataset
 
-## 3. Tải và lưu dataset
+Project sử dụng DUTS cho bài toán salient object detection:
 
-Project sử dụng dữ liệu cho bài toán **Salient Object Detection**. Có thể tải dataset từ các nguồn sau:
+- DUTS-TR: tập train.
+- DUTS-TE: tập test/evaluation.
 
-### 3.1. DUTS dataset
-
-DUTS gồm tập train **DUTS-TR** và tập test/evaluation **DUTS-TE**.
-
-Trang tải chính thức:
+Nguồn tải:
 
 - [DUTS official website](https://saliencydetection.net/duts/)
-
-Link tải trực tiếp:
-
 - [DUTS-TR.zip](https://saliencydetection.net/duts/download/DUTS-TR.zip)
 - [DUTS-TE.zip](https://saliencydetection.net/duts/download/DUTS-TE.zip)
-
-Nếu link chính thức tải chậm, có thể dùng bản mirror trên Kaggle:
-
 - [DUTS Saliency Detection Dataset - Kaggle](https://www.kaggle.com/datasets/balraj98/duts-saliency-detection-dataset)
 
-Sau khi tải và giải nén, đặt dữ liệu theo cấu trúc:
+Đặt dữ liệu theo đúng cấu trúc mà code đang đọc:
 
 ```text
 train_data/
-└── DUTS-TR/
-    ├── DUTS-TR-Image/            # Ảnh train .jpg
-    └── DUTS-TR-Mask/             # Mask train .png
+└── DUTS/
+    └── DUTS-TR/
+        ├── DUTS-TR-Image/
+        └── DUTS-TR-Mask/
 
 validation_data/
 └── DUTS-TE/
-    ├── DUTS-TE-Image/            # Ảnh validation/test .jpg
-    └── DUTS-TE-Mask/             # Mask validation/test .png
+    ├── DUTS-TE-Image/
+    └── DUTS-TE-Mask/
 ```
 
-Nếu code của bạn đang khai báo đường dẫn trực tiếp đến `train_data/DUTS-TR-Image/` và `train_data/DUTS-TR-Mask/`, hãy chuyển hai thư mục đó ra ngoài một cấp hoặc sửa lại đường dẫn trong `basnet_train.py` cho khớp với cấu trúc trên.
-
----
-
-## 4. Chuẩn bị dữ liệu test riêng
-
-Nếu chỉ muốn chạy thử model với ảnh bất kỳ, đặt ảnh cần dự đoán vào:
+Ảnh test riêng đặt tại:
 
 ```text
 test_data/
@@ -157,266 +240,284 @@ test_data/
     └── ...
 ```
 
-Kết quả dự đoán sẽ được lưu theo đường dẫn khai báo trong `basnet_test.py`. Nếu code đang dùng thư mục `test_data/test_results/`, hãy tạo thư mục này trước khi chạy:
+## 8. Cài đặt môi trường
+
+Khuyến nghị dùng Python 3.9+ và GPU CUDA.
 
 ```bash
-mkdir -p test_data/test_results
+pip install torch torchvision numpy scipy scikit-image pillow matplotlib tqdm
 ```
 
-Trên Windows PowerShell:
-
-```powershell
-mkdir test_data\test_results
-```
-
----
-
-## 5. Cài đặt môi trường
-
-Project này có thể được chạy bằng môi trường Python riêng để tránh lỗi xung đột thư viện. Trong quá trình thực hiện, nhóm sử dụng môi trường tên **`basnet_gpu`**. Người dùng có thể tạo môi trường cùng tên hoặc môi trường tương đương.
-
-### 5.1. Môi trường khuyến nghị
-
-Nếu dùng **Conda**, tạo môi trường như sau:
+Nếu dùng Conda:
 
 ```bash
-conda create -n basnet_gpu python=3.8 -y
+conda create -n basnet_gpu python=3.9 -y
 conda activate basnet_gpu
+pip install torch torchvision numpy scipy scikit-image pillow matplotlib tqdm
 ```
 
-Sau đó cài các thư viện cần thiết:
-
-```bash
-pip install torch torchvision numpy pillow opencv-python scikit-image scipy matplotlib tqdm
-```
-
-Nếu chạy bằng notebook, cài thêm:
-
-```bash
-pip install notebook ipykernel
-python -m ipykernel install --user --name basnet_gpu --display-name "Python (basnet_gpu)"
-```
-
-Khi mở notebook, chọn kernel:
-
-```text
-Python (basnet_gpu)
-```
-
-Nếu không dùng Conda, có thể dùng `venv`:
+Nếu dùng `venv`:
 
 ```bash
 python -m venv basnet_gpu
 ```
 
-Kích hoạt môi trường:
+Kích hoạt trên Windows:
+
+```powershell
+basnet_gpu\Scripts\activate
+```
+
+Kích hoạt trên Linux/MacOS:
 
 ```bash
-# Windows
-basnet_gpu\Scripts\activate
-
-# Linux/MacOS
 source basnet_gpu/bin/activate
 ```
 
-Sau đó cài thư viện tương tự:
-
-```bash
-pip install torch torchvision numpy pillow opencv-python scikit-image scipy matplotlib tqdm
-```
-
----
-
-### 5.2. Ghi chú về requirements gốc của BASNet
-
-Một số tài liệu/source code BASNet gốc sử dụng môi trường khá cũ:
-
-```text
-Python 3.6
-numpy 1.15.2
-scikit-image 0.14.0
-Pillow 5.2.0
-PyTorch 0.4.0
-torchvision 0.2.1
-glob
-```
-
-Trong đó, `glob` là thư viện có sẵn của Python nên không cần cài bằng `pip`.
-
-Các phiên bản trên chỉ nên xem là **requirements tham khảo của mã nguồn gốc**. Với project này, nên ưu tiên dùng môi trường đã kiểm thử là **`basnet_gpu`** hoặc môi trường có các thư viện tương đương. Không nên bắt buộc người dùng cài đúng PyTorch `0.4.0` nếu code hiện tại đã được chỉnh sửa và chạy ổn trên môi trường mới hơn.
-
----
-
-### 5.3. Kiểm tra phiên bản thư viện trong môi trường đang dùng
-
-Sau khi kích hoạt môi trường `basnet_gpu`, có thể kiểm tra nhanh bằng:
+Kiểm tra nhanh môi trường:
 
 ```bash
 python --version
-python -c "import torch, torchvision, numpy, PIL, skimage; print('torch:', torch.__version__); print('torchvision:', torchvision.__version__); print('numpy:', numpy.__version__); print('Pillow:', PIL.__version__); print('skimage:', skimage.__version__)"
+python -c "import torch, torchvision, numpy, PIL, skimage; print(torch.__version__); print(torchvision.__version__); print(numpy.__version__); print(PIL.__version__); print(skimage.__version__)"
 ```
 
-Nếu muốn lưu lại chính xác môi trường đang dùng, có thể xuất file requirements:
+Ghi chú: requirements gốc của BASNet khá cũ, ví dụ PyTorch `0.4.0`. Project PBL4 đã được chỉnh để chạy với môi trường mới hơn, nên không cần bắt buộc cài đúng phiên bản cũ nếu code hiện tại chạy ổn.
 
-```bash
-pip freeze > requirements.txt
-```
+## 9. Thiết lập thực nghiệm
 
-Sau đó người khác có thể cài lại bằng:
+Cấu hình hiện tại trong `basnet_train.py`:
 
-```bash
-pip install -r requirements.txt
-```
+| Thành phần | Giá trị |
+| --- | ---: |
+| Epoch | 20 |
+| Batch size train | 1 |
+| Batch size validation | 1 |
+| Gradient accumulation | 8 |
+| Input resize | 224 |
+| Random crop | 192 |
+| Validation ratio | 0.15 |
+| Optimizer | AdamW |
+| Decoder/refine LR | `1e-4` |
+| Encoder LR | `1e-5` |
+| Scheduler | Warmup + cosine |
+| BCE weight | 1.0 |
+| SSIM weight | 0.8 |
+| IoU weight | 1.0 |
+| Edge weight | 0.25 |
 
-## 6. Hướng dẫn chạy code
+Các checkpoint được sinh ra sau huấn luyện:
 
-### 6.1. Train hoặc fine-tune model
+| Checkpoint | Tiêu chí lưu |
+| --- | --- |
+| `basnet_best_valloss.pth` | Validation loss thấp nhất |
+| `basnet_best_mae.pth` | MAE thấp nhất |
+| `basnet_best_sm.pth` | S-measure cao nhất |
+| `basnet_best_wfm.pth` | Weighted F-measure cao nhất |
+| `checkpoint_resume.pth` | Resume toàn bộ trạng thái train |
 
-Trước khi train, cần bảo đảm đã có dữ liệu trong:
+## 10. Hướng dẫn chạy code
 
-```text
-train_data/DUTS-TR/
-validation_data/DUTS-TE/
-```
-
-Sau đó chạy:
+### 10.1. Huấn luyện hoặc fine-tune
 
 ```bash
 python basnet_train.py
 ```
 
-Checkpoint sau khi train/fine-tune nên được lưu vào:
+Trong quá trình train, script sẽ:
 
-```text
-saved_models/basnet_bsi/
+- đọc ảnh/mask từ `train_data/DUTS/DUTS-TR/`,
+- tự chia train/validation theo `VAL_RATIO`,
+- lưu checkpoint tốt nhất vào `saved_models/basnet_bsi/`,
+- lưu biểu đồ vào `figures/`.
+
+Nếu muốn train lại từ đầu, đổi:
+
+```python
+FORCE_RESTART = True
 ```
 
-Nếu muốn fine-tune từ checkpoint có sẵn, hãy kiểm tra biến đường dẫn checkpoint trong `basnet_train.py`, ví dụ nên trỏ đến:
+Sau khi chạy lại lần đầu, nên đổi về:
 
-```text
-saved_models/basnet_bsi/basnet_best_mae.pth
+```python
+FORCE_RESTART = False
 ```
 
-hoặc checkpoint phù hợp khác.
-
----
-
-### 6.2. Đánh giá model
-
-Để đánh giá model trên tập có ground truth, chạy:
+### 10.2. Đánh giá trên DUTS-TE
 
 ```bash
 python basnet_evaluate.py
 ```
 
-Trước khi chạy, cần có:
-
-```text
-validation_data/DUTS-TE/           # Hoặc validation_data/ECSSD/
-saved_models/basnet_bsi/*.pth      # Checkpoint cần đánh giá
-```
-
-Các chỉ số đánh giá thường dùng trong project:
-
-- MAE
-- S-measure
-- E-measure
-- Weighted F-measure
-- Boundary F-measure
-
-Nếu muốn đánh giá checkpoint tốt nhất theo MAE, dùng:
+Mặc định script dùng:
 
 ```text
 saved_models/basnet_bsi/basnet_best_mae.pth
 ```
 
-Nếu muốn đánh giá checkpoint tốt nhất theo Weighted F-measure, dùng:
+và đánh giá subset DUTS-TE gồm 1000 ảnh với seed 42. Có thể chỉnh `NUM_SAMPLES`, `RANDOM_SEED` hoặc `model_path` trong `basnet_evaluate.py` nếu muốn đánh giá toàn bộ tập hoặc checkpoint khác.
 
-```text
-saved_models/basnet_bsi/basnet_best_wfm.pth
-```
-
----
-
-### 6.3. Chạy dự đoán ảnh test
-
-Đặt ảnh cần dự đoán vào:
-
-```text
-test_data/test_images/
-```
-
-Sau đó chạy:
+### 10.3. Chạy dự đoán ảnh test
 
 ```bash
 python basnet_test.py
 ```
 
-Nếu chưa có checkpoint, tải checkpoint từ Google Drive ở phần 2 và đặt vào:
+Script sẽ:
+
+- đọc ảnh từ `test_data/test_images/`,
+- load các checkpoint tốt nhất,
+- sinh hình so sánh tại `figures/model_comparison.png`.
+
+## 11. Metric đánh giá
+
+| Metric | Ý nghĩa | Chiều tốt |
+| --- | --- | --- |
+| `MAE` | Sai khác tuyệt đối trung bình giữa prediction và ground truth | Thấp hơn |
+| `S-measure` | Độ tương đồng cấu trúc giữa mask dự đoán và ground truth | Cao hơn |
+| `E-measure` | Độ khớp kết hợp thông tin toàn cục và cục bộ | Cao hơn |
+| `wFm` | Weighted F-measure, cân bằng precision/recall theo trọng số vùng | Cao hơn |
+| `bFm` | Boundary F-measure, đánh giá chất lượng biên | Cao hơn |
+
+## 12. Kết quả huấn luyện
+
+Biểu đồ loss cho thấy quá trình học ổn định trong 20 epoch. Validation loss tốt nhất xuất hiện ở epoch 18.
+
+![Loss curve](figures/loss_curve.png)
+
+Biểu đồ tổng hợp loss và learning rate:
+
+![Loss and learning rate curve](figures/loss_lr_curve.png)
+
+Lịch learning rate warmup + cosine:
+
+![Learning rate schedule](figures/lr_schedule.png)
+
+Các metric validation tăng dần theo epoch, trong khi MAE giảm mạnh. Dựa trên biểu đồ, MAE validation giảm từ khoảng `0.19-0.21` xuống khoảng `0.048` ở cuối quá trình train.
+
+| Metric validation | Giá trị xấp xỉ cuối quá trình train |
+| --- | ---: |
+| `wFm` | 0.89-0.90 |
+| `bFm` | 0.78 |
+| `S-measure` | 0.89-0.90 |
+| `E-measure` | 0.92 |
+| `MAE` | 0.048 |
+
+![Training metrics](figures/metrics_curve.png)
+
+## 13. Kết quả đánh giá DUTS-TE
+
+`basnet_evaluate.py` đánh giá mô hình `basnet_best_mae.pth` trên subset DUTS-TE gồm 1000 ảnh với seed 42. Kết quả được đọc từ các hình đánh giá đã sinh trong `figures/`.
+
+| Metric | Kết quả |
+| --- | ---: |
+| Weighted F-measure `wFm` | 0.6672 |
+| Boundary F-measure `bFm` | 0.6231 |
+| S-measure `Sα` | 0.7525 |
+| E-measure `Em` | 0.8119 |
+| MAE | 0.0823 |
+
+Biểu đồ per-sample cho `wFm`, `bFm`, `S-measure`, `E-measure`:
+
+![DUTS-TE metrics](figures/metrics_wfm_bfm_sm_em.png)
+
+Biểu đồ per-sample MAE:
+
+![DUTS-TE MAE](figures/metric_mae.png)
+
+## 14. Kết quả định tính
+
+Hình dưới so sánh mask dự đoán từ các checkpoint được chọn theo các tiêu chí khác nhau: `MAE`, `SM`, `ValLoss`, `WFM`. Kết quả cho thấy các checkpoint đều tách được đối tượng chính khỏi nền; khác biệt chủ yếu nằm ở độ đầy của vùng mask và độ sắc/ổn định ở biên.
+
+![Model comparison](figures/model_comparison.png)
+
+## 15. Lỗi thường gặp
+
+### Thiếu checkpoint `.pth`
+
+Triệu chứng:
 
 ```text
-saved_models/basnet_bsi/
+FileNotFoundError hoặc [ERROR] Model not found
 ```
 
----
+Cách xử lý:
 
-## 7. Lỗi thường gặp
+- Tải checkpoint từ Google Drive.
+- Đặt file `.pth` vào `saved_models/basnet_bsi/`.
+- Kiểm tra `model_path` trong `basnet_evaluate.py` hoặc `MODELS` trong `basnet_test.py`.
 
-### Lỗi thiếu checkpoint `.pth`
+### Thiếu dataset
 
-Nguyên nhân: chưa tải model từ Google Drive hoặc lưu sai thư mục.
-
-Cách sửa:
+Triệu chứng:
 
 ```text
-Tải file .pth từ Google Drive
--> đặt vào saved_models/basnet_bsi/
--> kiểm tra lại đường dẫn checkpoint trong file .py đang chạy
+train images: 0
+validation images: 0
 ```
 
----
+Cách xử lý:
 
-### Lỗi thiếu dataset
+- Kiểm tra lại cấu trúc `train_data/DUTS/DUTS-TR/`.
+- Kiểm tra lại cấu trúc `validation_data/DUTS-TE/`.
+- Đảm bảo tên thư mục ảnh/mask đúng như code khai báo.
 
-Nguyên nhân: chưa tải DUTS/ECSSD hoặc đặt sai vị trí thư mục.
+### Sai đường dẫn ảnh/mask
 
-Cách sửa:
+Nếu dataset đã tồn tại nhưng code vẫn không đọc được, kiểm tra các biến:
 
-```text
-DUTS-TR -> train_data/DUTS-TR/
-DUTS-TE -> validation_data/DUTS-TE/
-ECSSD   -> validation_data/ECSSD/
-Ảnh test riêng -> test_data/test_images/
+```python
+data_dir
+tra_image_dir
+tra_label_dir
+test_data_dir
+test_image_dir
+test_label_dir
 ```
 
----
+## 16. Nhận xét thực nghiệm
 
-### Lỗi sai đường dẫn ảnh/mask
+Các kết quả thu được cho thấy pipeline PBL4 đã huấn luyện được mô hình có khả năng phân đoạn đối tượng nổi bật, loss giảm đều, metric validation tăng và MAE giảm rõ rệt. Việc thêm validation, checkpoint theo nhiều metric và biểu đồ per-sample giúp quá trình đánh giá minh bạch hơn so với script gốc chỉ train/inference cơ bản.
 
-Nguyên nhân: tên thư mục sau khi giải nén khác với tên trong code.
+Tuy nhiên, kết quả này không phải benchmark trực tiếp với bài báo BASNet gốc. Paper gốc huấn luyện với cấu hình lớn hơn, ảnh 320x320, crop 288x288, batch size 8 và khoảng 400k iterations trên GPU RTX Titan 24GB. Dự án PBL4 dùng cấu hình nhỏ hơn để phù hợp GPU ít VRAM, vì vậy mục tiêu chính là fine-tuning và xây dựng pipeline thực nghiệm hoàn chỉnh.
 
-Cách sửa:
+Hạn chế hiện tại:
 
-- Kiểm tra lại `data_loader.py`.
-- Kiểm tra lại đường dẫn trong `basnet_train.py`, `basnet_evaluate.py`, `basnet_test.py`.
-- Đổi tên thư mục hoặc sửa biến path trong code cho khớp.
+- DUTS-TE mới được đánh giá trên subset 1000 ảnh, chưa phải toàn bộ tập.
+- Một số giá trị validation trong README được đọc xấp xỉ từ biểu đồ, không phải log số gốc.
+- Chất lượng biên còn phụ thuộc mạnh vào kích thước input/crop và checkpoint được chọn.
 
----
+## 17. Kết luận
 
-## 8. Tóm tắt nhanh cho người mới chạy
+Dự án đã hoàn thiện một phiên bản BASNet fine-tuning có khả năng:
 
-Thực hiện theo thứ tự:
+- huấn luyện trên DUTS-TR với augmentation,
+- validation định kỳ bằng nhiều metric,
+- lưu checkpoint theo các tiêu chí khác nhau,
+- đánh giá trên DUTS-TE,
+- sinh biểu đồ loss/metric/lr,
+- trực quan hóa kết quả dự đoán định tính.
 
-```text
-1. Clone repository từ GitHub.
-2. Tạo các thư mục còn thiếu: train_data, validation_data, test_data/test_images, saved_models/basnet_bsi.
-3. Tải model .pth từ Google Drive.
-4. Đặt model .pth vào saved_models/basnet_bsi/.
-5. Tải DUTS-TR và DUTS-TE.
-6. Đặt DUTS-TR vào train_data/DUTS-TR/.
-7. Đặt DUTS-TE vào validation_data/DUTS-TE/.
-8. Nếu cần đánh giá ECSSD, tải ECSSD và đặt vào validation_data/ECSSD/.
-9. Cài thư viện Python.
-10. Chạy python basnet_train.py, python basnet_evaluate.py hoặc python basnet_test.py tùy mục đích.
+Những cải tiến này giúp dự án phù hợp hơn cho mục tiêu học thuật PBL4: không chỉ chạy lại BASNet gốc mà còn xây dựng được quy trình thực nghiệm, đánh giá và phân tích kết quả rõ ràng.
+
+## 18. Tài liệu tham khảo
+
+```bibtex
+@article{DBLP:journals/corr/abs-2101-04704,
+  author = {Xuebin Qin and Deng-Ping Fan and Chenyang Huang and Cyril Diagne and Zichen Zhang and Adri{\`{a}} Cabeza Sant'Anna and Albert Su{\`{a}}rez and Martin Jagersand and Ling Shao},
+  title = {Boundary-Aware Segmentation Network for Mobile and Web Applications},
+  journal = {CoRR},
+  volume = {abs/2101.04704},
+  year = {2021},
+  url = {https://arxiv.org/abs/2101.04704}
+}
 ```
 
+```bibtex
+@InProceedings{Qin_2019_CVPR,
+  author = {Qin, Xuebin and Zhang, Zichen and Huang, Chenyang and Gao, Chao and Dehghan, Masood and Jagersand, Martin},
+  title = {BASNet: Boundary-Aware Salient Object Detection},
+  booktitle = {The IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+  month = {June},
+  year = {2019}
+}
+```

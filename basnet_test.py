@@ -14,9 +14,7 @@ from data_loader import RescaleT, ToTensorLab, SalObjDataset
 from model import BASNet
 
 
-# ─────────────────────────────────────────────
 # Helpers
-# ─────────────────────────────────────────────
 
 def normPRED(d):
     ma = torch.max(d)
@@ -55,9 +53,7 @@ def load_model(model_path, device):
     return net
 
 
-# ─────────────────────────────────────────────
 # Config
-# ─────────────────────────────────────────────
 
 IMAGE_DIR   = './test_data/test_images/'
 FIGURES_DIR = './figures/'
@@ -71,11 +67,9 @@ MODELS = {
 }
 
 NUM_SAMPLES = 3
-SEED        = None        # None → random khác nhau mỗi lần chạy
+SEED        = None
 
-# ─────────────────────────────────────────────
 # Main
-# ─────────────────────────────────────────────
 
 if __name__ == '__main__':
     os.makedirs(FIGURES_DIR, exist_ok=True)
@@ -83,7 +77,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
-    # 1. Chọn ngẫu nhiên ảnh test
+    # Select test images.
     all_images = sorted(
         glob.glob(os.path.join(IMAGE_DIR, '*.jpg')) +
         glob.glob(os.path.join(IMAGE_DIR, '*.png'))
@@ -95,15 +89,15 @@ if __name__ == '__main__':
     selected = rng.sample(all_images, min(NUM_SAMPLES, len(all_images)))
     print('Ảnh được chọn:', [os.path.basename(p) for p in selected])
 
-    # 2. Load tất cả model
+    # Load checkpoints.
     print('Đang load models...')
     nets = {
         name: load_model(os.path.join(MODEL_DIR, fname), device)
         for name, fname in MODELS.items()
     }
-    model_names = list(nets.keys())   # ['MAE', 'SM', 'ValLoss', 'WFM']
+    model_names = list(nets.keys())
 
-    # 3. Subplot: rows = ảnh, cols = Original | MAE | SM | ValLoss | WFM
+    # Compare predictions from each checkpoint.
     col_labels = ['Original'] + model_names
     n_rows = len(selected)
     n_cols = len(col_labels)
@@ -115,14 +109,12 @@ if __name__ == '__main__':
         stem    = os.path.splitext(os.path.basename(img_path))[0]
         orig_np = io.imread(img_path)
 
-        # Dự đoán với từng model
         preds = {}
         for name, net in nets.items():
             _, mask = predict_single(net, img_path, device)
             preds[name] = mask
             print(f'  [{stem}] model={name} ✓')
 
-        # ── vẽ từng ô ──
         for col, label in enumerate(col_labels):
             ax = fig.add_subplot(gs[row, col])
             ax.set_xticks([]); ax.set_yticks([])
@@ -132,11 +124,9 @@ if __name__ == '__main__':
             else:
                 ax.imshow(preds[label], cmap='gray', vmin=0, vmax=255)
 
-            # Tiêu đề cột (hàng đầu tiên)
             if row == 0:
                 ax.set_title(label, fontsize=10, fontweight='bold', pad=5)
 
-            # Nhãn hàng (cột đầu tiên)
             if col == 0:
                 ax.set_ylabel(stem, fontsize=8, labelpad=4)
 

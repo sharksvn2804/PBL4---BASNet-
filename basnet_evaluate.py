@@ -1,8 +1,4 @@
-# ============================================================
-#  DUTS-TE EVALUATION SCRIPT
-#  Run this AFTER training to evaluate on test set
-#  Usage: python basnet_evaluate.py
-# ============================================================
+# Evaluate a trained BASNet checkpoint on DUTS-TE.
 
 import torch
 import os
@@ -29,18 +25,14 @@ from data_loader import (
 )
 from model import BASNet
 
-# ============================================================
-#  CONFIG
-# ============================================================
+# Config
 NUM_SAMPLES = 1000        # number of samples for evaluation
 RANDOM_SEED = 42          # seed
 
 FIGURES_DIR = "./figures"
 os.makedirs(FIGURES_DIR, exist_ok=True)
 
-# ============================================================
-#  EVALUATION METRICS (same as basnet_train.py)
-# ============================================================
+# Evaluation metrics
 def compute_mae(pred, gt):
     pred_np = pred.squeeze().cpu().float().numpy().astype(np.float64)
     gt_np   = gt.squeeze().cpu().float().numpy().astype(np.float64)
@@ -166,11 +158,8 @@ def compute_boundary_fmeasure(pred, gt, threshold=0.5, beta_sq=0.3, tolerance=3)
     return float(Fb)
 
 
-# ============================================================
-#  PLOTTING HELPERS
-# ============================================================
+# Plotting helpers
 def _style_ax(ax, title, ylabel, color):
-    # Common style:
     ax.set_title(title, fontsize=13, fontweight='bold', pad=8)
     ax.set_xlabel("Sample index", fontsize=10)
     ax.set_ylabel(ylabel, fontsize=10)
@@ -181,7 +170,6 @@ def _style_ax(ax, title, ylabel, color):
 
 
 def plot_four_metrics(wfm_list, bfm_list, sm_list, em_list, save_path):
-    # 4 metrics:
     metrics = [
         (wfm_list, "Weighted F-measure  (F^w)", "F^w",  "#4C72B0"),
         (bfm_list, "Boundary F-measure  (F^b)", "F^b",  "#DD8452"),
@@ -219,7 +207,6 @@ def plot_four_metrics(wfm_list, bfm_list, sm_list, em_list, save_path):
 
 
 def plot_mae(mae_list, save_path):
-    # Plot MAE:
     arr = np.array(mae_list)
     xs  = np.arange(1, len(arr) + 1)
     running_avg = np.cumsum(arr) / xs
@@ -243,16 +230,14 @@ def plot_mae(mae_list, save_path):
     print(f"[PLOT] Saved → {save_path}")
 
 
-# ============================================================
-#  MAIN EVALUATION
-# ============================================================
+# Main evaluation
 
 if __name__ == '__main__':
     
     torch.cuda.empty_cache()
     torch.backends.cudnn.benchmark = True
     
-    # ------- Model Loading --------
+    # Model loading
     model_path = "./saved_models/basnet_bsi/basnet_best_mae.pth"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -267,7 +252,7 @@ if __name__ == '__main__':
     print(f"[LOAD] Model loaded from {model_path}")
     print(f"[DEVICE] {device}")
     
-    # ------- DUTS-TE Dataset --------
+    # DUTS-TE dataset
     test_data_dir = './validation_data/'
     test_image_dir = 'DUTS-TE/DUTS-TE-Image/'
     test_label_dir = 'DUTS-TE/DUTS-TE-Mask/'
@@ -280,7 +265,7 @@ if __name__ == '__main__':
         glob.glob(test_data_dir + test_image_dir + '*' + image_ext)
     )
 
-    # Random samples
+    # Reproducible subset
     if NUM_SAMPLES is not None and NUM_SAMPLES < len(all_img_paths):
         random.seed(RANDOM_SEED)
         test_img_name_list = random.sample(all_img_paths, NUM_SAMPLES)
@@ -299,7 +284,7 @@ if __name__ == '__main__':
             os.path.join(test_data_dir, test_label_dir, imidx + label_ext)
         )
     
-    # ------- DataLoader --------
+    # DataLoader
     test_dataset = SalObjDataset(
         img_name_list=test_img_name_list,
         lbl_name_list=test_lbl_name_list,
@@ -317,10 +302,10 @@ if __name__ == '__main__':
         pin_memory=True,
     )
     
-    # ------- Evaluation --------
+    # Evaluation
     print("\n[EVAL] Evaluating on DUTS-TE subset...")
 
-    # Per-sample lists
+    # Per-sample metrics
     mae_list = []
     sm_list  = []
     em_list  = []
@@ -365,7 +350,7 @@ if __name__ == '__main__':
             
             torch.cuda.empty_cache()
     
-    # ------- Results --------
+    # Results
     avg_mae = np.mean(mae_list)
     avg_sm  = np.mean(sm_list)
     avg_em  = np.mean(em_list)
@@ -384,7 +369,7 @@ if __name__ == '__main__':
     print(f"Total samples: {total_samples}")
     print("="*60 + "\n")
 
-    # ------- Plots --------
+    # Plots
     print("[PLOT] Generating figures...")
 
     plot_four_metrics(

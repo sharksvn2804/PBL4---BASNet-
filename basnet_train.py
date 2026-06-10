@@ -16,7 +16,7 @@ from scipy.ndimage import (distance_transform_edt,
 from data_loader import (GaussianNoise, RescaleT, RandomCrop, CenterCrop,
                          RandomHorizontalFlip, RandomVerticalFlip,
                          ColorJitter, ToTensor, ToTensorLab, SalObjDataset, RandomRotation, GaussianBlur)
-# Ưu tiên model lite cho RTX 3050; nếu chưa copy file thì fallback về BASNet cũ.
+# Prefer the lightweight model when available.
 try:
     from model.BASNet_3050_lite import BASNet
     print("[Model] Using BASNet_3050_lite")
@@ -26,9 +26,7 @@ except Exception:
 import pytorch_ssim
 import pytorch_iou
 
-# ================================================================
-#  OOM / CUDA CONFIG
-# ================================================================
+# Runtime setup
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 torch.cuda.empty_cache()
 
@@ -38,9 +36,7 @@ torch.backends.cudnn.enabled       = True
 torch.backends.cudnn.allow_tf32    = True
 torch.backends.cuda.matmul.allow_tf32 = True
 
-# ================================================================
-#  DEVICE
-# ================================================================
+# Device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Device: {device}")
 if torch.cuda.is_available():
@@ -49,15 +45,7 @@ if torch.cuda.is_available():
     print(f"VRAM  : {total_vram:.1f} GB")
     torch.cuda.empty_cache()
 
-# ================================================================
-#  CONFIG  ← chỉnh theo VRAM của bạn
-# ================================================================
-#  VRAM  | batch_size_train | SIZE_TRAIN | CROP_SIZE
-#  4 GB  |        1         |    192     |    160
-#  6 GB  |        1         |    224     |    192
-#  8 GB  |        2         |    256     |    224   ← default
-#  12 GB |        4         |    256     |    224
-#  16 GB |        8         |    256     |    224
+# Training config. Defaults target RTX 3050 4GB.
 accumulation_steps   = 8       # RTX 3050: effective batch = 8, update nhiều hơn accum=32
 batch_size_train     = 1      # RTX 3050 4GB → bắt buộc bs=1
 batch_size_val       = 1      # RTX 3050 4GB → bắt buộc bs=1
@@ -70,27 +58,19 @@ VAL_RATIO            = 0.15    # dùng gần hết DUTS-TR thay vì bỏ phí �
 FREEZE_LOW_ENCODER_UNTIL = 10
 UNFREEZE_ALL_EPOCH       = 20
 
-# ── FORCE RESTART ───────────────────────────────────────────────
-# Đặt True để xóa checkpoint cũ và train lại từ đầu hoàn toàn.
-# Sau khi chạy xong lần đầu, đặt lại False để resume bình thường.
+# Set True to discard the resume checkpoint.
 FORCE_RESTART = False   # đổi kiến trúc/loss thì nên train lại từ đầu
 
-# ================================================================
-#  LOSS CONFIG
-# ================================================================
+# Loss weights
 LOSS_W_BCE  = 1.0
 LOSS_W_SSIM = 0.8
 LOSS_W_IOU  = 1.0
 LOSS_W_EDGE = 0.25   # nhấn nhẹ vào biên mask, rẻ hơn boundary loss phức tạp
 
-# ================================================================
-#  CHECKPOINT PATH
-# ================================================================
+# Checkpoint path
 CHECKPOINT_PATH = "./saved_models/basnet_bsi/checkpoint_resume.pth"
 
-# ================================================================
-#  CHECKPOINT  SAVE / LOAD
-# ================================================================
+# Checkpoint helpers
 def save_checkpoint(epoch, net, optimizer, scheduler, scaler,
                     best_val_loss, best_epoch,
                     train_losses, val_losses, lr_list,
@@ -120,12 +100,10 @@ def load_checkpoint(net, optimizer, scheduler, scaler):
     print(f"[Checkpoint] Found: {CHECKPOINT_PATH}")
     ckpt = torch.load(CHECKPOINT_PATH, map_location=device)
 
-    # strict=False: bỏ qua key mismatch giữa BN (checkpoint cũ) và GN (model mới).
-    # Weight/bias affine vẫn được load đúng; chỉ bỏ qua running_mean/var/num_batches.
     missing, unexpected = net.load_state_dict(ckpt["model_state"], strict=True)
     print(f"Layers bị thiếu: {missing}")
     print(f"Layers bị thừa: {unexpected}")
-    # Lọc ra những key thực sự quan trọng (không phải BN buffer)
+    # Ignore BatchNorm buffers when converting old BN checkpoints to GN.
     bn_buffers = {"running_mean", "running_var", "num_batches_tracked"}
     real_missing    = [k for k in missing    if not any(b in k for b in bn_buffers)]
     real_unexpected = [k for k in unexpected if not any(b in k for b in bn_buffers)]
@@ -137,7 +115,7 @@ def load_checkpoint(net, optimizer, scheduler, scaler):
     if skipped:
         print(f"  [OK] Skipped {skipped} BN buffer keys (BN→GN convert)")
 
-    # Optimizer / scheduler có thể không tương thích nếu LR thay đổi → reset nhẹ
+    # Optimizer or scheduler states may be incompatible after LR changes.
     try:
         optimizer.load_state_dict(ckpt["optim_state"])
     except Exception as e:
@@ -159,9 +137,7 @@ def load_checkpoint(net, optimizer, scheduler, scaler):
             ckpt["mae_list"], ckpt["sm_list"], ckpt["em_list"],
             ckpt["wfm_list"], ckpt["bfm_list"])
 
-# ================================================================
-#  METRICS
-# ================================================================
+# Metrics
 def compute_mae(pred, gt):
     p = pred.squeeze().cpu().float().numpy().astype(np.float64)
     g = gt.squeeze().cpu().float().numpy().astype(np.float64)
@@ -252,9 +228,7 @@ def compute_boundary_fmeasure(pred, gt, threshold=0.5, beta_sq=0.3, tolerance=3)
     R = float((gb_bd & pb_d).sum()) / (gs + 1e-8) if gs > 0 else 0.0
     return float((1 + beta_sq) * P * R / (beta_sq * P + R + 1e-8))
 
-# ================================================================
-#  LOSS FUNCTIONS
-# ================================================================
+# Loss functions
 bce_loss  = nn.BCELoss(reduction='mean')
 ssim_loss = pytorch_ssim.SSIM(window_size=11, size_average=True)
 iou_loss  = pytorch_iou.IOU(size_average=True)
@@ -282,8 +256,7 @@ def bce_iou_loss(pred, target):
     return bce_loss(pred, target) * LOSS_W_BCE + iou_loss(pred, target) * LOSS_W_IOU
 
 def muti_loss_fusion(d0, d1, d2, d3, d4, d5, d6, d7, labels_v):
-    # Tập trung mạnh vào d0/d1, giảm trọng số các side output rất sâu.
-    # Cách này thường giúp mask cuối sắc hơn và giảm tình trạng over-supervise.
+    # Emphasize final outputs and keep deep side-output supervision lighter.
     loss0 = bce_ssim_iou_loss(d0, labels_v, use_edge=True)
     loss1 = bce_ssim_iou_loss(d1, labels_v, use_edge=False)
     loss2 = bce_iou_loss(d2, labels_v)
@@ -297,14 +270,9 @@ def muti_loss_fusion(d0, d1, d2, d3, d4, d5, d6, d7, labels_v):
                   + 0.30 * loss4 + 0.15 * loss5 + 0.10 * loss6 + 0.10 * loss7)
     return loss0, total_loss
 
-# ================================================================
-#  WARMUP + COSINE SCHEDULER
-# ================================================================
+# Warmup + cosine scheduler
 class WarmupCosineScheduler(torch.optim.lr_scheduler._LRScheduler):
-    """
-    Linear warmup cho warmup_steps bước đầu,
-    sau đó cosine annealing từ max_lr → min_lr.
-    """
+    """Linear warmup followed by cosine decay."""
     def __init__(self, optimizer, warmup_steps, total_steps,
                  min_lr=1e-6, last_epoch=-1):
         self.warmup_steps = warmup_steps
@@ -317,10 +285,8 @@ class WarmupCosineScheduler(torch.optim.lr_scheduler._LRScheduler):
         lrs  = []
         for base_lr in self.base_lrs:
             if step < self.warmup_steps:
-                # Linear warmup: 0 → base_lr
                 lr = base_lr * (step + 1) / self.warmup_steps
             else:
-                # Cosine decay: base_lr → min_lr
                 progress = min(1.0, (step - self.warmup_steps) / max(
                     1, self.total_steps - self.warmup_steps))
                 lr = self.min_lr + 0.5 * (base_lr - self.min_lr) * (
@@ -328,12 +294,10 @@ class WarmupCosineScheduler(torch.optim.lr_scheduler._LRScheduler):
             lrs.append(lr)
         return lrs
 
-# ================================================================
-#  MAIN TRAIN
-# ================================================================
+# Main training
 def train():
 
-    # ── DATA ────────────────────────────────────────────────────
+    # Data
     data_dir      = './train_data/'
     tra_image_dir = 'DUTS/DUTS-TR/DUTS-TR-Image/'
     tra_label_dir = 'DUTS/DUTS-TR/DUTS-TR-Mask/'
@@ -348,8 +312,7 @@ def train():
     random.shuffle(combined)
     all_img, all_lbl = map(list, zip(*combined))
 
-    # Dùng gần hết dữ liệu thay vì cố định 6500/1625.
-    # Nếu muốn train nhanh để test code, có thể đặt train_num/val_num nhỏ lại ở CONFIG.
+    # Use automatic split unless train_num/val_num are set above.
     if train_num is None or val_num is None:
         real_val_num = max(1, int(len(all_img) * VAL_RATIO))
         real_train_num = len(all_img) - real_val_num
@@ -364,10 +327,10 @@ def train():
             RescaleT(SIZE_TRAIN),
             RandomCrop(CROP_SIZE),
             RandomHorizontalFlip(p=0.5),
-            RandomVerticalFlip(p=0.1),           # SOD: flip dọc quá nhiều dễ làm dữ liệu kém tự nhiên
+            RandomVerticalFlip(p=0.1),
             RandomRotation(degrees=10, p=0.4),
             ColorJitter(brightness=0.2, contrast=0.2, saturation=0.15, p=0.4),
-            GaussianBlur(kernel_size=3, p=0.15), # blur ít thôi để không làm mềm biên
+            GaussianBlur(kernel_size=3, p=0.15),
             GaussianNoise(mean=0.0, std=0.008, p=0.25),
             ToTensorLab(flag=0),
         ])
@@ -401,20 +364,16 @@ def train():
     print(f"Input size: {SIZE_TRAIN} → crop {CROP_SIZE}")
     print(f"Loss: BCE×{LOSS_W_BCE} | SSIM×{LOSS_W_SSIM} | IOU×{LOSS_W_IOU}")
 
-    # ── MODEL ───────────────────────────────────────────────────
+    # Model
     net = BASNet(3, 1).to(device)
 
-    # Freeze tầng thấp vài epoch đầu: tiết kiệm VRAM + giữ đặc trưng ImageNet ổn định.
     for param in net.encoder1.parameters(): param.requires_grad = False
     for param in net.encoder2.parameters(): param.requires_grad = False
-    # encoder3/4 vẫn train với LR nhỏ để thích nghi với mask SOD.
-    # print(net)
     trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
     print(f"Trainable params: {trainable_params/1e6:.2f}M")
     print(f"Model on: {next(net.parameters()).device}")
 
-    # ── OPTIMIZER ───────────────────────────────────────────────
-    # Differential LR: decoder/refine học nhanh hơn, encoder pretrained học chậm hơn.
+    # Optimizer
     INIT_LR = 1e-4
     ENCODER_LR = 1e-5
     encoder_params, decoder_params = [], []
@@ -434,7 +393,7 @@ def train():
         weight_decay=5e-5
     )
 
-    # ── SCHEDULER ───────────────────────────────────────────────
+    # Scheduler
     total_steps   = epoch_num * len(train_loader) // accumulation_steps
     warmup_steps  = 3 * len(train_loader) // accumulation_steps
     scheduler = WarmupCosineScheduler(
@@ -446,7 +405,7 @@ def train():
 
     scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
 
-    # ── LOAD CHECKPOINT ─────────────────────────────────────────
+    # Load checkpoint
     if FORCE_RESTART and os.path.exists(CHECKPOINT_PATH):
         os.remove(CHECKPOINT_PATH)
         print("[FORCE_RESTART] Đã xóa checkpoint cũ — train từ đầu.")
@@ -482,12 +441,10 @@ def train():
     best_wfm = max(wfm_list) if wfm_list else 0.0
     best_mae = min(mae_list) if mae_list  else float('inf')
 
-    # ================================================================
-    #  TRAINING LOOP
-    # ================================================================
+    # Training loop
     for epoch in range(start_epoch, epoch_num):
 
-        # ── TRAIN ────────────────────────────────────────────────
+        # Train
         net.train()
         optimizer.zero_grad(set_to_none=True)
 
@@ -524,11 +481,10 @@ def train():
                     data['label'].float().to(device, non_blocking=True), 0.0),
                 0.0, 1.0)
 
-            # autocast chỉ bao forward của model — BCELoss không an toàn với fp16
             with torch.amp.autocast('cuda', dtype=torch.float16, enabled=(device.type == 'cuda')):
                 d0, d1, d2, d3, d4, d5, d6, d7 = net(inputs)
 
-            # Cast về float32 TRƯỚC khi tính loss (BCELoss/SSIM/IOU cần fp32)
+            # Loss is computed in fp32 for stability.
             d0f = d0.float(); d1f = d1.float()
             d2f = d2.float(); d3f = d3.float()
             d4f = d4.float(); d5f = d5.float()
@@ -569,7 +525,7 @@ def train():
         epoch_train_total /= total_batches
         train_losses.append(epoch_train_total)
 
-        # ── VALIDATION ───────────────────────────────────────────
+        # Validation
         net.eval()
 
         val_loss     = 0.0
@@ -656,7 +612,7 @@ def train():
             print(f"  GPU: {torch.cuda.memory_allocated() / 1024**3:.2f} GB used | "
                   f"{torch.cuda.memory_reserved() / 1024**3:.2f} GB reserved")
 
-        # ── SAVE BEST ────────────────────────────────────────────
+        # Save best checkpoints
         os.makedirs(model_dir, exist_ok=True)
 
         if avg_val_loss < best_val_loss:
@@ -691,7 +647,7 @@ def train():
                         train_losses, val_losses, lr_list,
                         mae_list, sm_list, em_list, wfm_list, bfm_list)
 
-        # ── PLOTS ────────────────────────────────────────────────
+        # Plots
         os.makedirs("figures", exist_ok=True)
         x = list(range(1, len(train_losses) + 1))
 
