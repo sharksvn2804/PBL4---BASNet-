@@ -384,14 +384,6 @@ Biểu đồ loss cho thấy quá trình học ổn định trong 20 epoch. Vali
 
 ![Loss curve](figures/loss_curve.png)
 
-Biểu đồ tổng hợp loss và learning rate:
-
-![Loss and learning rate curve](figures/loss_lr_curve.png)
-
-Lịch learning rate warmup + cosine:
-
-![Learning rate schedule](figures/lr_schedule.png)
-
 Các metric validation tăng dần theo epoch, trong khi MAE giảm mạnh. Dựa trên biểu đồ, MAE validation giảm từ khoảng `0.19-0.21` xuống khoảng `0.048` ở cuối quá trình train.
 
 | Metric validation | Giá trị xấp xỉ cuối quá trình train |
